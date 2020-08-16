@@ -4,7 +4,7 @@ from urllib.parse import unquote
 import utils.util as util
 from WeiboModel import WeiboItem 
 import settings
-from lxml import html
+from lxml import html, etree
 import requests
 from TokenPool import TokenPool
 from OutfileHelper import *
@@ -79,13 +79,17 @@ class WeiboSearch():
                     if count == -1:
                         self.logger.write(f'{start_date}-{i} Split Region')
                         for region in self.regions.values():
+                            print(region)
                             requestUrl = self.urlBuilder(keyword, start_date, i, region)
-                            count += self.sendRequest(requestUrl)
-                            if count == -1:
-                                self.logger.write(f'{start_date}-{i} {Region} Split City')
+                            regionCount = self.sendRequest(requestUrl)
+                            if regionCount == -1:
+                                self.logger.write(f'{start_date}-{i} {region} Split City')
                                 for city in region['city'].values():
+                                    print(city)
                                     requestUrl = self.urlBuilder(keyword, start_date, i, region, city)
                                     count += self.sendRequest(requestUrl, firstPage=False)
+                            else:
+                                count += regionCount
                     
                     self.logger.write(f'{start_date}-{i} Complete')
                 start_date = start_date + timedelta(days=1)
@@ -96,9 +100,9 @@ class WeiboSearch():
             header = buildHeader(token)
             page = requests.get(url, headers=header)
             response = html.fromstring(page.content)
-
             is_empty = response.xpath('//div[@class="card card-no-result s-pt20b40"]')
             page_count = len(response.xpath('//ul[@class="s-scroll"]/li'))
+            print(page_count)
             if is_empty:
                 print('当前页面搜索结果为空')
                 return 0
@@ -108,7 +112,6 @@ class WeiboSearch():
                     for weibo in self.parse_weibo(response):
                         count += 1
                         self.csvWritter.write(weibo)
-                        ## Write to file
                 except TokenError:
                     self.tokenPool.disableToken(token)
                     return self.sendRequest(url, firstPage)
@@ -121,8 +124,10 @@ class WeiboSearch():
                 else:
                     return count
             else: ## Split
+                
                 return -1
                 
+
     def parse_weibo(self, response):
         """解析网页中的微博信息"""
         # keyword = response.meta.get('keyword')
@@ -133,14 +138,26 @@ class WeiboSearch():
             )
             if info:
                 weibo = WeiboItem()
-                weibo['id'] = sel.xpath('@mid')[0]
-                weibo['bid'] = sel.xpath(
-                    '(.//p[@class="from"])[last()]/a[1]/@href')[0].split('/')[-1].split('?')[0]
-                weibo['user_id'] = info[0].xpath(
-                    'div[2]/a/@href')[0].split('?')[0].split(
-                        '/')[-1]
-                weibo['screen_name'] = info[0].xpath(
-                    'div[2]/a/@nick-name')[0]
+                try:
+                    weibo['id'] = sel.xpath('@mid')[0]
+                except IndexError:
+                    weibo['id'] = ''
+
+                try:
+                    weibo['bid'] = sel.xpath('(.//p[@class="from"])[last()]/a[1]/@href')[0].split('/')[-1].split('?')[0]
+                except IndexError:
+                    weibo['bid'] = ''
+
+                try:
+                    weibo['user_id'] = info[0].xpath('div[2]/a/@href')[0].split('?')[0].split('/')[-1]
+                except IndexError:
+                    weibo['user_id'] = ''
+
+                try:
+                    weibo['screen_name'] = info[0].xpath('div[2]/a/@nick-name')[0]
+                except IndexError:
+                    weibo['screen_name'] = ''
+                
                 txt_sel = sel.xpath('.//p[@class="txt"]')[0]
                 retweet_sel = sel.xpath('.//div[@class="card-comment"]')
                 retweet_txt_sel = ''
@@ -168,9 +185,12 @@ class WeiboSearch():
                     else:
                         txt_sel = content_full[0]
                         is_long_weibo = True
-                weibo['text'] = txt_sel.xpath(
-                    'string(.)')[0].replace('\u200b', '').replace(
-                        '\ue627', '')
+
+                try:
+                    weibo['text'] = txt_sel.xpath('string(.)').replace('\u200b', '').replace('\ue627', '')
+                except IndexError:
+                    weibo['text'] = ''
+
                 weibo['article_url'] = self.get_article_url(txt_sel)
                 weibo['location'] = self.get_location(txt_sel)
                 if weibo['location']:
@@ -179,43 +199,59 @@ class WeiboSearch():
                 weibo['text'] = weibo['text'][2:].replace(' ', '')
                 if is_long_weibo:
                     weibo['text'] = weibo['text'][:-6]
+
                 weibo['at_users'] = self.get_at_users(txt_sel)
                 weibo['topics'] = self.get_topics(txt_sel)
-                reposts_count = sel.xpath(
-                    './/a[@action-type="feed_list_forward"]/text()'
-                )
+                try:
+                    reposts_count = sel.xpath('.//a[@action-type="feed_list_forward"]/text()')[0]
+                except IndexError:
+                    reposts_count = ''
+
                 try:
                     reposts_count = re.findall(r'\d+.*', reposts_count)
                 except TypeError:
                     print('cookie无效或已过期，请按照'
                           'https://github.com/dataabc/weibo-search#如何获取cookie'
                           ' 获取cookie')
-                    raise TokenError()
+                    raise CloseSpider()
                 weibo['reposts_count'] = reposts_count[
                     0] if reposts_count else '0'
-                comments_count = sel.xpath(
-                    './/a[@action-type="feed_list_comment"]/text()'
-                )[0]
+                
+                try:
+                    comments_count = sel.xpath('.//a[@action-type="feed_list_comment"]/text()')[0]
+                except IndexError:
+                    comments_count = ''
+
                 comments_count = re.findall(r'\d+.*', comments_count)
                 weibo['comments_count'] = comments_count[
                     0] if comments_count else '0'
-                attitudes_count = sel.xpath(
-                    '(.//a[@action-type="feed_list_like"])[last()]/em/text()'
-                )[0]
+
+                try:
+                    attitudes_count = sel.xpath('(.//a[@action-type="feed_list_like"])[last()]/em/text()')[0]
+                except IndexError:
+                    attitudes_count = ''
+
                 weibo['attitudes_count'] = (attitudes_count
                                             if attitudes_count else '0')
-                created_at = sel.xpath(
-                    '(.//p[@class="from"])[last()]/a[1]/text()').extract_first(
-                    ).replace(' ', '').replace('\n', '').split('前')[0]
+
+                try:
+                    created_at = sel.xpath('(.//p[@class="from"])[last()]/a[1]/text()')[0].replace(' ', '').replace('\n', '').split('前')[0]
+                except IndexError:
+                    created_at = ''
+
                 weibo['created_at'] = util.standardize_date(created_at)
-                source = sel.xpath('(.//p[@class="from"])[last()]/a[2]/text()'
-                                   )[0]
+
+                try:
+                    source = sel.xpath('(.//p[@class="from"])[last()]/a[2]/text()')[0]
+                except IndexError:
+                    source = ''
+
                 weibo['source'] = source if source else ''
                 pics = ''
                 is_exist_pic = sel.xpath(
                     './/div[@class="media media-piclist"]')
                 if is_exist_pic:
-                    pics = is_exist_pic[0].xpath('ul[1]/li/img/@src').extract()
+                    pics = is_exist_pic[0].xpath('ul[1]/li/img/@src')[:]
                     pics = [pic[2:] for pic in pics]
                     pics = [
                         re.sub(r'/.*?/', '/large/', pic, 1) for pic in pics
@@ -225,7 +261,12 @@ class WeiboSearch():
                 is_exist_video = sel.xpath(
                     './/div[@class="thumbnail"]/a/@action-data')
                 if is_exist_video:
-                    video_url = is_exist_video[0]
+                    
+                    try:
+                        video_url = is_exist_video[0]
+                    except IndexError:
+                        video_url = ''
+
                     video_url = unquote(
                         str(video_url)).split('video_src=//')[-1]
                     video_url = 'http://' + video_url
@@ -239,23 +280,41 @@ class WeiboSearch():
                 if retweet_sel and retweet_sel[0].xpath(
                         './/div[@node-type="feed_list_forwardContent"]/a[1]'):
                     retweet = WeiboItem()
-                    retweet['id'] = retweet_sel[0].xpath(
-                        './/a[@action-type="feed_list_like"]/@action-data'
-                    )[0][4:]
-                    retweet['bid'] = retweet_sel[0].xpath(
-                        './/p[@class="from"]/a/@href')[0].split(
-                            '/')[-1].split('?')[0]
+
+                    try:
+                        retweet['id'] = retweet_sel[0].xpath('.//a[@action-type="feed_list_like"]/@action-data')[0][4:]
+                    except IndexError:
+                        retweet['id'] = ''
+
+                    try:
+                        retweet['bid'] = retweet_sel[0].xpath('.//p[@class="from"]/a/@href')[0].split('/')[-1].split('?')[0]    
+                    except IndexError:
+                        retweet['bid'] = ''
+
+
                     info = retweet_sel[0].xpath(
                         './/div[@node-type="feed_list_forwardContent"]/a[1]'
                     )[0]
-                    retweet['user_id'] = info.xpath(
-                        '@href')[0].split('/')[-1]
-                    retweet['screen_name'] = info.xpath(
-                        '@nick-name')[0]
-                    retweet['text'] = retweet_txt_sel.xpath(
-                        'string(.)')[0].replace('\u200b',
-                                                             '').replace(
-                                                                 '\ue627', '')
+
+                    try:
+                        retweet['user_id'] = info.xpath('@href')[0].split('/')[-1]
+                    except IndexError:
+                        retweet['user_id'] = ''
+
+                    try:
+                        retweet['screen_name'] = info.xpath('@nick-name')[0]
+                    except IndexError:
+                        retweet['screen_name'] = ''
+
+                    try:
+                        retweet['text'] = retweet_txt_sel.xpath('string(.)').replace('\u200b','').replace('\ue627', '')
+                    except IndexError:
+                        retweet['text'] = ''
+
+                    
+                    
+                    
+
                     retweet['article_url'] = self.get_article_url(
                         retweet_txt_sel)
                     retweet['location'] = self.get_location(retweet_txt_sel)
@@ -265,31 +324,50 @@ class WeiboSearch():
                     retweet['text'] = retweet['text'][2:].replace(' ', '')
                     if is_long_retweet:
                         retweet['text'] = retweet['text'][:-6]
+
+                    import pdb; pdb.set_trace()
                     retweet['at_users'] = self.get_at_users(retweet_txt_sel)
                     retweet['topics'] = self.get_topics(retweet_txt_sel)
-                    reposts_count = retweet_sel[0].xpath(
-                        './/ul[@class="act s-fr"]/li/a[1]/text()'
-                    )[0]
+
+                    try:
+                        reposts_count = retweet_sel[0].xpath('.//ul[@class="act s-fr"]/li/a[1]/text()')[0]
+                    except IndexError:
+                        reposts_count = ''
+                    
+
                     reposts_count = re.findall(r'\d+.*', reposts_count)
                     retweet['reposts_count'] = reposts_count[
                         0] if reposts_count else '0'
-                    comments_count = retweet_sel[0].xpath(
-                        './/ul[@class="act s-fr"]/li[2]/a[1]/text()'
-                    )[0]
+
+                    try:
+                        comments_count = retweet_sel[0].xpath('.//ul[@class="act s-fr"]/li[2]/a[1]/text()')[0]
+                    except IndexError:
+                        comments_count = ''
+
+                    
                     comments_count = re.findall(r'\d+.*', comments_count)
                     retweet['comments_count'] = comments_count[
                         0] if comments_count else '0'
-                    attitudes_count = retweet_sel[0].xpath(
-                        './/a[@action-type="feed_list_like"]/em/text()'
-                    )[0]
+
+                    try:
+                        attitudes_count = retweet_sel[0].xpath('.//a[@action-type="feed_list_like"]/em/text()')[0]
+                    except IndexError:
+                        attitudes_count = ''
+
                     retweet['attitudes_count'] = (attitudes_count
                                                   if attitudes_count else '0')
-                    created_at = retweet_sel[0].xpath(
-                        './/p[@class="from"]/a[1]/text()').extract_first(
-                        ).replace(' ', '').replace('\n', '').split('前')[0]
+                    try:    
+                        created_at = retweet_sel[0].xpath('.//p[@class="from"]/a[1]/text()')[0].replace(' ', '').replace('\n', '').split('前')[0]
+                    except IndexError:
+                        created_at = ''
+
                     retweet['created_at'] = util.standardize_date(created_at)
-                    source = retweet_sel[0].xpath(
-                        './/p[@class="from"]/a[2]/text()')[0]
+
+                    try:
+                        source = retweet_sel[0].xpath('.//p[@class="from"]/a[2]/text()')[0]
+                    except IndexError:
+                        source = ''
+
                     retweet['source'] = source if source else ''
                     retweet['pics'] = pics
                     retweet['video_url'] = video_url
@@ -297,13 +375,13 @@ class WeiboSearch():
                     # yield {'weibo': retweet, 'keyword': keyword}
                     weibo['retweet_id'] = retweet['id']
                 all_weibo.append(weibo)
-        
         return all_weibo
+
     
     def get_article_url(self, selector):
         """获取微博头条文章url"""
         article_url = ''
-        text = selector.xpath('string(.)')[0].replace(
+        text = selector.xpath('string(.)').replace(
             '\u200b', '').replace('\ue627', '').replace('\n',
                                                         '').replace(' ', '')
         if text.startswith('发布了头条文章'):
@@ -324,7 +402,7 @@ class WeiboSearch():
         for a in a_list:
             if a.xpath('./i[@class="wbicon"]') and a.xpath(
                     './i[@class="wbicon"]/text()')[0] == '2':
-                location = a.xpath('string(.)')[0][1:]
+                location = a.xpath('string(.)')[1:]
                 break
         return location
 
@@ -334,11 +412,9 @@ class WeiboSearch():
         at_users = ''
         at_list = []
         for a in a_list:
-            if len(unquote(a.xpath('@href')[0])) > 14 and len(
-                    a.xpath('string(.)')[0]) > 1:
-                if unquote(a.xpath('@href')[0])[14:] == a.xpath(
-                        'string(.)')[0][1:]:
-                    at_user = a.xpath('string(.)')[0][1:]
+            if len(unquote(a.xpath('@href')[0])) > 14 and len(a.xpath('string(.)')) > 1:
+                if unquote(a.xpath('@href')[0])[14:] == a.xpath('string(.)')[1:]:
+                    at_user = a.xpath('string(.)')[1:]
                     if at_user not in at_list:
                         at_list.append(at_user)
         if at_list:
@@ -351,7 +427,7 @@ class WeiboSearch():
         topics = ''
         topic_list = []
         for a in a_list:
-            text = a.xpath('string(.)')[0]
+            text = a.xpath('string(.)')
             if len(text) > 2 and text[0] == '#' and text[-1] == '#':
                 if text[1:-1] not in topic_list:
                     topic_list.append(text[1:-1])

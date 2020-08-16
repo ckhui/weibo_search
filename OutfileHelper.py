@@ -2,6 +2,7 @@ import os
 from datetime import datetime
 from WeiboModel import HEADER
 import settings
+import csv
 
 class WeiboWritter(object):
     def __init__(self, name):
@@ -21,7 +22,7 @@ class WeiboWritter(object):
             if self.is_first_write:
                 writer.writerow(HEADER)
                 self.is_first_write = False
-            writer.writerow(item.data)
+            writer.writerow(item.data())
 
 class TokenLog(object):
     def __init__(self):
