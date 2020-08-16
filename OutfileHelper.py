@@ -30,7 +30,7 @@ class TokenLog(object):
         base_dir =  'log'
         if not os.path.isdir(base_dir):
             os.makedirs(base_dir)
-        self.file_path = base_dir + os.sep + 'TokenLogs' + '.csv'
+        self.file_path = base_dir + os.sep + 'TokenLogs' + '.txt'
         with open(self.file_path, 'a+') as f:
             f.write(f"\n===== START LOG =====\n")
 
