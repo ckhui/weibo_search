@@ -392,14 +392,13 @@ class WeiboSearch():
             urls = selector.xpath('.//a')
             for url in urls:
                 try:
-                    if url.xpath(
-                            'i[@class="wbicon"]/text()')[0] == 'O':
-                        if url.xpath('@href')[0] and url.xpath(
-                                '@href')[0].startswith('http://t.cn'):
+                    if url.xpath('i[@class="wbicon"]/text()')[0] == 'O':
+                        if url.xpath('@href')[0] and url.xpath('@href')[0].startswith('http://t.cn'):
                             article_url = url.xpath('@href')[0]
                         break
                 except:
-                    import pdb; pdb.set_trace()
+                    continue
+                    # import pdb; pdb.set_trace()
         return article_url
 
     def get_location(self, selector):
