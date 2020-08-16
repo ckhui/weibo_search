@@ -79,13 +79,11 @@ class WeiboSearch():
                     if count == -1:
                         self.logger.write(f'{start_date}-{i} Split Region')
                         for region in self.regions.values():
-                            print(region)
                             requestUrl = self.urlBuilder(keyword, start_date, i, region)
                             regionCount = self.sendRequest(requestUrl)
                             if regionCount == -1:
                                 self.logger.write(f'{start_date}-{i} {region} Split City')
                                 for city in region['city'].values():
-                                    print(city)
                                     requestUrl = self.urlBuilder(keyword, start_date, i, region, city)
                                     count += self.sendRequest(requestUrl, firstPage=False)
                             else:
@@ -102,7 +100,6 @@ class WeiboSearch():
             response = html.fromstring(page.content)
             is_empty = response.xpath('//div[@class="card card-no-result s-pt20b40"]')
             page_count = len(response.xpath('//ul[@class="s-scroll"]/li'))
-            print(page_count)
             if is_empty:
                 print('当前页面搜索结果为空')
                 return 0
@@ -116,7 +113,13 @@ class WeiboSearch():
                     self.tokenPool.disableToken(token)
                     return self.sendRequest(url, firstPage)
 
-                next_url = response.xpath('//a[@class="next"]/@href')[0]
+                if firstPage:
+                    print("page : ", page_count)
+                try:
+                    next_url = response.xpath('//a[@class="next"]/@href')[0]
+                except IndexError:
+                    next_url = ''
+
                 if next_url: 
                     next_url = self.base_url + next_url
                     next_count = self.sendRequest(next_url, firstPage=False)
@@ -384,15 +387,19 @@ class WeiboSearch():
         text = selector.xpath('string(.)').replace(
             '\u200b', '').replace('\ue627', '').replace('\n',
                                                         '').replace(' ', '')
+                                                        
         if text.startswith('发布了头条文章'):
             urls = selector.xpath('.//a')
             for url in urls:
-                if url.xpath(
-                        'i[@class="wbicon"]/text()')[0] == 'O':
-                    if url.xpath('@href')[0] and url.xpath(
-                            '@href')[0].startswith('http://t.cn'):
-                        article_url = url.xpath('@href')[0]
-                    break
+                try:
+                    if url.xpath(
+                            'i[@class="wbicon"]/text()')[0] == 'O':
+                        if url.xpath('@href')[0] and url.xpath(
+                                '@href')[0].startswith('http://t.cn'):
+                            article_url = url.xpath('@href')[0]
+                        break
+                except:
+                    import pdb; pdb.set_trace()
         return article_url
 
     def get_location(self, selector):
