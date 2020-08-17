@@ -35,7 +35,7 @@ class WeiboSearch():
         self.weibo_type = util.convert_weibo_type(settings.WEIBO_TYPE)
         self.contain_type = util.convert_contain_type(settings.CONTAIN_TYPE)
         self.regions = util.get_regions(settings.REGION)
-        self.base_url = 'https://s.weibo.com/weibo'
+        self.base_url = 'https://s.weibo.com'
 
         
         self.keyword_list = settings.KEYWORD_LIST
@@ -46,7 +46,7 @@ class WeiboSearch():
         self.logger = CompletionLog()
         
 
-    def urlBuilder(self, keyword, date, hour, province=None, city=None):
+    def urlBuilder(self, keyword, date, hour, page=1, province=None, city=None):
         date_str = date.strftime('%Y-%m-%d') + '-0'
         start_date = datetime.strptime(date_str, '%Y-%m-%d-%H')
         start_date = start_date + timedelta(hours=hour)
@@ -54,7 +54,7 @@ class WeiboSearch():
         start_str = start_date.strftime('%Y-%m-%d-X%H').replace('X0', 'X').replace('X', '')
         end_time = start_date + timedelta(hours=1)
         end_str = end_time.strftime('%Y-%m-%d-X%H').replace('X0', 'X').replace('X', '')
-        url = self.base_url + '?q=%s'%keyword
+        url = self.base_url + '/weibo?q=%s'%keyword
 
         if not province is None:
             if city is None:
@@ -62,7 +62,7 @@ class WeiboSearch():
             url += '&region=custom:{}:{}'.format(keyword, province['code'], city)
         url += self.weibo_type
         url += self.contain_type
-        url += '&timescope=custom:{}:{}&page=1'.format(start_str, end_str)
+        url += '&timescope=custom:{}:{}&page={}'.format(start_str, end_str, page)
         return url
         
     def crawl(self):
@@ -71,7 +71,7 @@ class WeiboSearch():
             end_date = datetime.strptime(self.end_date, '%Y-%m-%d')
             while start_date <= end_date:
                 self.csvWritter = WeiboWritter(f"{keyword} {start_date}")
-                for i in range(0, 24):
+                for i in range(0, 1):
                     self.logger.write(f'{start_date}-{i} Start')
                     count = 0
                     requestUrl = self.urlBuilder(keyword, start_date, i)
@@ -93,6 +93,7 @@ class WeiboSearch():
                 start_date = start_date + timedelta(days=1)
                 
     def sendRequest(self, url, firstPage=True):
+            print(url)
             ## send request, get response
             token = self.tokenPool.getToken()
             header = buildHeader(token)
@@ -113,19 +114,24 @@ class WeiboSearch():
                     self.tokenPool.disableToken(token)
                     return self.sendRequest(url, firstPage)
 
-                if firstPage:
-                    print("page : ", page_count)
-                try:
-                    next_url = response.xpath('//a[@class="next"]/@href')[0]
-                except IndexError:
-                    next_url = ''
-
-                if next_url: 
-                    next_url = self.base_url + next_url
-                    next_count = self.sendRequest(next_url, firstPage=False)
-                    return count + next_count 
-                else:
+                # try:
+                #     next_url = response.xpath('//a[@class="next"]/@href')[0]
+                # except IndexError:
+                #     next_url = ''
+                if page_count == 1: 
                     return count
+                
+                if firstPage:
+                    print(url, " page : ", page_count)
+                    next_urls = [url.replace("page=1",f"page={p}") for p in range(2,page_count+1)]
+                    next_counts = [self.sendRequest(next_url, firstPage=False) for next_url in next_urls]
+                    return sum(next_counts)
+                # if next_url: 
+                #     next_url = self.base_url + next_url
+                #     next_count = self.sendRequest(next_url, firstPage=False)
+                #     return count + next_count 
+                # else:
+                #     return count
             else: ## Split
                 
                 return -1
