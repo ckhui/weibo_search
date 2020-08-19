@@ -41,6 +41,7 @@ class TokenPool():
             time.sleep(self.delay)
             return self.getToken()
         else:
+            time.sleep(0.2)
             e = self.token[self.ptr]
             self.ptr += 1
             return e

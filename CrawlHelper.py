@@ -6,9 +6,10 @@ from WeiboModel import WeiboItem
 import settings
 from lxml import html, etree
 import requests
+from requests.exceptions import InvalidURL
 from TokenPool import TokenPool
 from OutfileHelper import *
-
+import time
 # split day to hour
 # build request
 # send request with token
@@ -41,12 +42,13 @@ class WeiboSearch():
         self.keyword_list = settings.KEYWORD_LIST
         self.start_date = settings.START_DATE
         self.end_date = settings.END_DATE
+        self.start_hr = settings.START_HOUR
 
         self.tokenPool = TokenPool()
         self.logger = CompletionLog()
         
 
-    def urlBuilder(self, keyword, date, hour, page=1, province=None, city=None):
+    def urlBuilder(self, keyword, date, hour, province=None, city=None, page=1):
         date_str = date.strftime('%Y-%m-%d') + '-0'
         start_date = datetime.strptime(date_str, '%Y-%m-%d-%H')
         start_date = start_date + timedelta(hours=hour)
@@ -59,7 +61,7 @@ class WeiboSearch():
         if not province is None:
             if city is None:
                 city = '1000'
-            url += '&region=custom:{}:{}'.format(keyword, province['code'], city)
+            url += '&region=custom:{}:{}'.format(province, city)
         url += self.weibo_type
         url += self.contain_type
         url += '&timescope=custom:{}:{}&page={}'.format(start_str, end_str, page)
@@ -71,7 +73,7 @@ class WeiboSearch():
             end_date = datetime.strptime(self.end_date, '%Y-%m-%d')
             while start_date <= end_date:
                 self.csvWritter = WeiboWritter(f"{keyword} {start_date}")
-                for i in range(0, 1):
+                for i in range(self.start_hr, 24):
                     self.logger.write(f'{start_date}-{i} Start')
                     count = 0
                     requestUrl = self.urlBuilder(keyword, start_date, i)
@@ -79,12 +81,12 @@ class WeiboSearch():
                     if count == -1:
                         self.logger.write(f'{start_date}-{i} Split Region')
                         for region in self.regions.values():
-                            requestUrl = self.urlBuilder(keyword, start_date, i, region)
+                            requestUrl = self.urlBuilder(keyword, start_date, i, region['code'])
                             regionCount = self.sendRequest(requestUrl)
                             if regionCount == -1:
                                 self.logger.write(f'{start_date}-{i} {region} Split City')
                                 for city in region['city'].values():
-                                    requestUrl = self.urlBuilder(keyword, start_date, i, region, city)
+                                    requestUrl = self.urlBuilder(keyword, start_date, i, region['code'], city)
                                     count += self.sendRequest(requestUrl, firstPage=False)
                             else:
                                 count += regionCount
@@ -92,15 +94,31 @@ class WeiboSearch():
                     self.logger.write(f'{start_date}-{i} Complete')
                 start_date = start_date + timedelta(days=1)
                 
-    def sendRequest(self, url, firstPage=True):
+    def sendRequest(self, url, firstPage=True, retry=True):                
+
             print(url)
             ## send request, get response
             token = self.tokenPool.getToken()
             header = buildHeader(token)
-            page = requests.get(url, headers=header)
+            
+            try:
+                page = requests.get(url, headers=header)
+            except InvalidURL:
+                time.sleep(60)
+                return self.sendRequest(url, firstPage, retry=True)
+                # import pdb; pdb.set_trace()
+            except Exception as e:
+                # print(e)
+                # import pdb; pdb.set_trace()
+                if retry:
+                    return self.sendRequest(url, firstPage, retry=False)
+                else:
+                    return 0
+
             response = html.fromstring(page.content)
             is_empty = response.xpath('//div[@class="card card-no-result s-pt20b40"]')
             page_count = len(response.xpath('//ul[@class="s-scroll"]/li'))
+            # import pdb; pdb.set_trace()
             if is_empty:
                 print('当前页面搜索结果为空')
                 return 0
@@ -110,9 +128,18 @@ class WeiboSearch():
                     for weibo in self.parse_weibo(response):
                         count += 1
                         self.csvWritter.write(weibo)
+                    if count == 0:
+                        self.tokenPool.disableToken(token)    
+                        if retry:
+                            return self.sendRequest(url, firstPage, retry=False)
+                        else:
+                            return count
                 except TokenError:
                     self.tokenPool.disableToken(token)
-                    return self.sendRequest(url, firstPage)
+                    if retry:
+                        return self.sendRequest(url, firstPage, retry=False)
+                    else:
+                        return count
 
                 # try:
                 #     next_url = response.xpath('//a[@class="next"]/@href')[0]
@@ -123,9 +150,13 @@ class WeiboSearch():
                 
                 if firstPage:
                     print(url, " page : ", page_count)
-                    next_urls = [url.replace("page=1",f"page={p}") for p in range(2,page_count+1)]
+                    next_urls = [url.replace("page=1",f"page={p}") for p in range(1,page_count+1)]
                     next_counts = [self.sendRequest(next_url, firstPage=False) for next_url in next_urls]
+                    print(next_counts)
                     return sum(next_counts)
+                else:
+                    return count
+                
                 # if next_url: 
                 #     next_url = self.base_url + next_url
                 #     next_count = self.sendRequest(next_url, firstPage=False)
@@ -334,7 +365,6 @@ class WeiboSearch():
                     if is_long_retweet:
                         retweet['text'] = retweet['text'][:-6]
 
-                    import pdb; pdb.set_trace()
                     retweet['at_users'] = self.get_at_users(retweet_txt_sel)
                     retweet['topics'] = self.get_topics(retweet_txt_sel)
 
